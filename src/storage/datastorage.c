@@ -51,6 +51,9 @@ pthread_mutex_t client_array_mutex;
 struct mac_entry_s* mac_set = NULL;
 int mac_set_last = 0;
 
+struct mac_entry_s* exclude_ap_bssid_set = NULL;
+int exclude_ap_bssid_set_last = 0;
+
 /*
 ** The ..._find_first() functions perform an efficient search of the core storage linked lists.
 ** "Skipping" linear searches and binary searches are used depending on anticipated array size.
@@ -151,6 +154,20 @@ struct mac_entry_s* mac_find_entry(struct dawn_mac mac)
     dawnlog_debug_func("Entering...");
 
     struct mac_entry_s* ret = mac_set;
+
+    while (ret && mac_compare_bb(ret->mac, mac) != 0)
+    {
+        ret = ret->next_mac;
+    }
+
+    return ret;
+}
+
+struct mac_entry_s* is_excluded_ap(struct dawn_mac mac)
+{
+    dawnlog_debug_func("Entering...");
+
+    struct mac_entry_s* ret = exclude_ap_bssid_set;
 
     while (ret && mac_compare_bb(ret->mac, mac) != 0)
     {
@@ -465,6 +482,11 @@ int better_ap_available(ap *kicking_ap, probe_entry *own_probe, int own_score, s
 
 int kick_clients(struct dawn_mac bssid_mac, uint32_t id) {
     dawnlog_debug_func("Entering...");
+
+    if (is_excluded_ap(bssid_mac)) {
+        dawnlog_trace("Current AP " MACSTR " is excluded\n", MAC2STR(bssid_mac.u8));
+        return 0;
+    }
 
     dawn_mutex_lock(&client_array_mutex);
     dawn_mutex_lock(&probe_array_mutex);
@@ -1281,7 +1303,7 @@ client *insert_client_to_array(client *entry, time_t expiry) {
     return ret;
 }
 
-void insert_macs_from_file() {
+void _insert_macs_from_file(int is_ap_set) {
     FILE *fp;
     char *line = NULL;
     size_t len = 0;
@@ -1289,11 +1311,12 @@ void insert_macs_from_file() {
 
     dawnlog_debug_func("Entering...");
 
-    fp = fopen("/tmp/dawn_mac_list", "r");
+    char *filename = is_ap_set ? "/etc/dawn_nokick_aps" : "/tmp/dawn_mac_list";
+    fp = fopen(filename, "r");
     if (fp == NULL)
     {
-        dawnlog_error("Failed opening MAC list file - quitting!\n");
-        exit(EXIT_FAILURE);
+        dawnlog_always("Failed opening MAC list file %s, assume empty list", filename);
+        return;
     }
 
     dawn_regmem(fp);
@@ -1309,7 +1332,10 @@ void insert_macs_from_file() {
         dawnlog_debug("Retrieved line of length %zu :\n", read);
         dawnlog_debug("%s", line);
 
-        insert_to_maclist(str2mac(line));
+        if (is_ap_set)
+            _insert_to_maclist(str2mac(line), &exclude_ap_bssid_set, &exclude_ap_bssid_set_last);
+        else
+            _insert_to_maclist(str2mac(line), &mac_set, &mac_set_last);
 
 #ifdef DAWN_MEMORY_AUDITING
         char* old_line = line;
@@ -1342,10 +1368,13 @@ void insert_macs_from_file() {
 
     //exit(EXIT_SUCCESS);
 }
-
+void insert_macs_from_file(int is_ap_set) {
+    _insert_macs_from_file(0);
+    _insert_macs_from_file(1);
+}
 
 // TODO: This list only ever seems to get longer.  Why do we need it?
-struct mac_entry_s *insert_to_maclist(struct dawn_mac mac) {
+struct mac_entry_s *_insert_to_maclist(struct dawn_mac mac, struct mac_entry_s **set_head, int *set_len) {
     dawnlog_debug_func("Entering...");
 
     struct mac_entry_s* new_mac = NULL;
@@ -1361,14 +1390,18 @@ struct mac_entry_s *insert_to_maclist(struct dawn_mac mac) {
         {
             new_mac->mac = mac;
 
-            new_mac->next_mac = mac_set;
-            mac_set = new_mac;
-            mac_set_last++;
+            new_mac->next_mac = *set_head;
+            *set_head = new_mac;
+            (*set_len)++;
         }
     }
 
     return new_mac;
 }
+struct mac_entry_s *insert_to_maclist(struct dawn_mac mac) {
+    return _insert_to_maclist(mac, &mac_set, &mac_set_last);
+}
+
 
 void print_probe_entry(int level, probe_entry *entry) {
     dawn_mutex_require(&probe_array_mutex);

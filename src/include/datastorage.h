@@ -23,11 +23,14 @@ struct mac_entry_s {
 };
 
 // ---------------- Functions ----------
+void _insert_macs_from_file(int is_ap_set);
 void insert_macs_from_file();
 
-struct mac_entry_s* insert_to_maclist(struct dawn_mac mac);
+struct mac_entry_s *_insert_to_maclist(struct dawn_mac mac, struct mac_entry_s **set_head, int *set_len);
+struct mac_entry_s *insert_to_maclist(struct dawn_mac mac);
 
 struct mac_entry_s* mac_find_entry(struct dawn_mac mac);
+struct mac_entry_s* is_excluded_ap(struct dawn_mac mac);
 
 struct mac_entry_s* insert_to_mac_array(struct mac_entry_s* entry);
 
